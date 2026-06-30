@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..config import load_config, save_config
 from ..differ import diff
 from ..session import SESSION_EXT, load_session, save_session
 from .theme import DARK, LIGHT, apply_theme
@@ -72,10 +73,16 @@ class MainWindow(QMainWindow):
         self._changeset = None
         self._before = None
         self._after = None
-        self._theme = DARK
+        self._config = load_config()
+        self._theme = DARK if self._config.get("theme", "dark") == "dark" else LIGHT
         self._build_menu()
         self._build_ui()
         self._check_admin()
+        # Apply persisted theme + label
+        apply_theme(QApplication.instance(), self._theme)
+        self._theme_action.setText(
+            "Switch to &Light Theme" if self._theme == DARK else "Switch to &Dark Theme"
+        )
 
     def _build_menu(self):
         menubar = self.menuBar()
@@ -115,10 +122,11 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         root_layout.addWidget(self._stack)
 
-        self._configure_page = ConfigurePage()
+        self._configure_page = ConfigurePage(config=self._config)
         self._snapshot_page = SnapshotPage()
         self._changes_page = ChangesPage()
         self._export_page = ExportPage()
+        self._export_page.set_output_dir(self._config.get("last_output_dir", ""))
 
         self._stack.addWidget(self._configure_page)
         self._stack.addWidget(self._snapshot_page)
@@ -171,6 +179,7 @@ class MainWindow(QMainWindow):
         exclusions = self._configure_page.get_exclusions()
         reg_hives = self._configure_page.get_reg_hives()
         settle = self._configure_page.get_settle_delay()
+        self._persist_config()  # save custom paths/settings before a long scan
         self._snapshot_page.configure(fs_roots, exclusions, reg_hives, settle)
         self._go_to(PAGE_SNAPSHOT)
         self._snapshot_page.start()
@@ -233,3 +242,15 @@ class MainWindow(QMainWindow):
         self._theme_action.setText(
             "Switch to &Light Theme" if self._theme == DARK else "Switch to &Dark Theme"
         )
+        self._persist_config()
+
+    # ---------- config persistence ----------
+    def _persist_config(self):
+        cfg = self._configure_page.export_config()
+        cfg["theme"] = self._theme
+        cfg["last_output_dir"] = self._export_page.get_output_dir()
+        save_config(cfg)
+
+    def closeEvent(self, event):
+        self._persist_config()
+        super().closeEvent(event)

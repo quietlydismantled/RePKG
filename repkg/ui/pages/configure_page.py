@@ -29,9 +29,11 @@ ALL_REG_HIVES = [
 
 
 class ConfigurePage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, config=None):
         super().__init__(parent)
         self._build_ui()
+        if config:
+            self._apply_config(config)
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -137,6 +139,49 @@ class ConfigurePage(QWidget):
     def _remove_selected(self, widget: QListWidget):
         for item in widget.selectedItems():
             widget.takeItem(widget.row(item))
+
+    # --- config persistence ---
+    def _apply_config(self, cfg: dict):
+        fs_roots = cfg.get("fs_roots")
+        if fs_roots:
+            self._fs_list.clear()
+            for entry in fs_roots:
+                item = QListWidgetItem(entry.get("path", ""))
+                item.setCheckState(
+                    Qt.CheckState.Checked if entry.get("checked", True)
+                    else Qt.CheckState.Unchecked
+                )
+                self._fs_list.addItem(item)
+
+        exclusions = cfg.get("exclusions")
+        if exclusions is not None:
+            self._ex_list.clear()
+            for ex in exclusions:
+                self._ex_list.addItem(QListWidgetItem(ex))
+
+        reg_hives = cfg.get("reg_hives")
+        if reg_hives:
+            for cb, _ in self._reg_checks:
+                if cb.text() in reg_hives:
+                    cb.setChecked(bool(reg_hives[cb.text()]))
+
+        settle = cfg.get("settle_delay")
+        if settle is not None:
+            self._settle_spin.setValue(int(settle))
+
+    def export_config(self) -> dict:
+        return {
+            "fs_roots": [
+                {
+                    "path": self._fs_list.item(i).text(),
+                    "checked": self._fs_list.item(i).checkState() == Qt.CheckState.Checked,
+                }
+                for i in range(self._fs_list.count())
+            ],
+            "exclusions": [self._ex_list.item(i).text() for i in range(self._ex_list.count())],
+            "reg_hives": {cb.text(): cb.isChecked() for cb, _ in self._reg_checks},
+            "settle_delay": self._settle_spin.value(),
+        }
 
     # --- getters ---
     def get_fs_roots(self) -> list[str]:

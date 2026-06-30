@@ -114,6 +114,13 @@ class ExportPage(QWidget):
         if path:
             self._dir_edit.setText(path)
 
+    def get_output_dir(self) -> str:
+        return self._dir_edit.text().strip()
+
+    def set_output_dir(self, path: str):
+        if path:
+            self._dir_edit.setText(path)
+
     def _do_export(self):
         out_dir = self._dir_edit.text().strip()
         if not out_dir:
