@@ -66,9 +66,13 @@ class ConfigurePage(QWidget):
         fs_btns = QHBoxLayout()
         add_btn = QPushButton("Add Path…")
         add_btn.clicked.connect(lambda: self._browse_into(self._fs_list))
+        fs_import_btn = QPushButton("Import from File…")
+        fs_import_btn.setToolTip("Load paths from a .txt/.lst file (one per line)")
+        fs_import_btn.clicked.connect(lambda: self._import_paths(self._fs_list, checkable=True))
         rm_btn = QPushButton("Remove Selected")
         rm_btn.clicked.connect(lambda: self._remove_selected(self._fs_list))
         fs_btns.addWidget(add_btn)
+        fs_btns.addWidget(fs_import_btn)
         fs_btns.addWidget(rm_btn)
         fs_btns.addStretch()
         fs_layout.addLayout(fs_btns)
@@ -86,9 +90,13 @@ class ConfigurePage(QWidget):
         ex_btns = QHBoxLayout()
         ex_add = QPushButton("Add Path…")
         ex_add.clicked.connect(self._add_exclusion)
+        ex_import = QPushButton("Import from File…")
+        ex_import.setToolTip("Load paths from a .txt/.lst file (one per line)")
+        ex_import.clicked.connect(lambda: self._import_paths(self._ex_list, checkable=False))
         ex_rm = QPushButton("Remove Selected")
         ex_rm.clicked.connect(lambda: self._remove_selected(self._ex_list))
         ex_btns.addWidget(ex_add)
+        ex_btns.addWidget(ex_import)
         ex_btns.addWidget(ex_rm)
         ex_btns.addStretch()
         ex_layout.addLayout(ex_btns)
@@ -139,6 +147,42 @@ class ConfigurePage(QWidget):
     def _remove_selected(self, widget: QListWidget):
         for item in widget.selectedItems():
             widget.takeItem(widget.row(item))
+
+    def _existing_paths(self, widget: QListWidget) -> set:
+        return {widget.item(i).text() for i in range(widget.count())}
+
+    def _import_paths(self, widget: QListWidget, checkable: bool):
+        from PySide6.QtWidgets import QMessageBox
+        fpath, _ = QFileDialog.getOpenFileName(
+            self, "Import Paths", "", "Path lists (*.txt *.lst);;All files (*.*)"
+        )
+        if not fpath:
+            return
+        try:
+            with open(fpath, "r", encoding="utf-8-sig", errors="replace") as f:
+                lines = f.readlines()
+        except OSError as e:
+            QMessageBox.critical(self, "Import Failed", str(e))
+            return
+
+        existing = self._existing_paths(widget)
+        added = 0
+        for line in lines:
+            entry = line.strip()
+            if not entry or entry.startswith("#"):
+                continue
+            entry = os.path.normpath(entry)
+            if entry in existing:
+                continue
+            existing.add(entry)
+            if checkable:
+                self._add_checked_item(widget, entry)
+            else:
+                widget.addItem(QListWidgetItem(entry))
+            added += 1
+        QMessageBox.information(
+            self, "Import Complete", f"Added {added} path(s) from file."
+        )
 
     # --- config persistence ---
     def _apply_config(self, cfg: dict):
