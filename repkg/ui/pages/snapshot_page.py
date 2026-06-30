@@ -40,11 +40,7 @@ class ElidingLabel(QLabel):
         elided = fm.elidedText(self._full, self._mode, max(0, self.width() - 2))
         super().setText(elided)
 
-from ...snapshotter import (
-    snapshot_filesystem,
-    snapshot_registry,
-    save_snapshot,
-)
+from ...snapshotter import snapshot_registry, save_snapshot
 
 
 class _SnapshotWorker(QThread):
@@ -54,11 +50,14 @@ class _SnapshotWorker(QThread):
     result_ready = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, fs_roots, fs_exclusions, reg_hives):
+    def __init__(self, engine, phase, fs_roots, fs_exclusions, reg_hives, before_state=None):
         super().__init__()
+        self._engine = engine
+        self._phase = phase
         self._fs_roots = fs_roots
         self._fs_exclusions = fs_exclusions
         self._reg_hives = reg_hives
+        self._before_state = before_state
         self._count = 0
 
     def _tick(self, path: str):
@@ -69,16 +68,20 @@ class _SnapshotWorker(QThread):
 
     def run(self):
         try:
-            fs = snapshot_filesystem(
+            fs_state = self._engine.capture(
+                self._phase,
                 self._fs_roots,
                 self._fs_exclusions,
                 progress_cb=self._tick,
+                before_state=self._before_state,
             )
             reg = snapshot_registry(
                 self._reg_hives,
                 progress_cb=lambda p: self.progress.emit(p, self._count),
             )
-            self.result_ready.emit({"filesystem": fs, "registry": reg})
+            state = dict(fs_state)
+            state["registry"] = reg
+            self.result_ready.emit(state)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -89,6 +92,7 @@ class SnapshotPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._engine = None
         self._fs_roots = []
         self._fs_exclusions = []
         self._reg_hives = []
@@ -142,7 +146,8 @@ class SnapshotPage(QWidget):
 
         layout.addStretch()
 
-    def configure(self, fs_roots, fs_exclusions, reg_hives, settle_delay=0):
+    def configure(self, engine, fs_roots, fs_exclusions, reg_hives, settle_delay=0):
+        self._engine = engine
         self._fs_roots = fs_roots
         self._fs_exclusions = fs_exclusions
         self._reg_hives = reg_hives
@@ -157,7 +162,9 @@ class SnapshotPage(QWidget):
         self._install_frame.hide()
         self._continue_btn.hide()
 
-        self._worker = _SnapshotWorker(self._fs_roots, self._fs_exclusions, self._reg_hives)
+        self._worker = _SnapshotWorker(
+            self._engine, "before", self._fs_roots, self._fs_exclusions, self._reg_hives
+        )
         self._worker.progress.connect(self._on_progress)
         self._worker.result_ready.connect(self._on_before_done)
         self._worker.error.connect(self._on_error)
@@ -175,9 +182,12 @@ class SnapshotPage(QWidget):
         self._title.setText("<h2>Before Snapshot Complete</h2>")
         self._progress.hide()
         self._count_label.setText("")
+        if "filesystem" in snapshot:
+            fs_msg = f"Captured {len(snapshot['filesystem']):,} files"
+        else:
+            fs_msg = "USN checkpoint recorded"
         self._status_label.setText(
-            f"Captured {len(snapshot['filesystem']):,} files  |  "
-            f"{len(snapshot['registry']):,} registry values"
+            f"{fs_msg}  |  {len(snapshot['registry']):,} registry values"
         )
         self._install_frame.show()
         self._continue_btn.show()
@@ -213,7 +223,10 @@ class SnapshotPage(QWidget):
         self._progress.setRange(0, 0)
         self._progress.show()
 
-        self._worker = _SnapshotWorker(self._fs_roots, self._fs_exclusions, self._reg_hives)
+        self._worker = _SnapshotWorker(
+            self._engine, "after", self._fs_roots, self._fs_exclusions,
+            self._reg_hives, before_state=self._before,
+        )
         self._worker.progress.connect(self._on_progress)
         self._worker.result_ready.connect(self._on_after_done)
         self._worker.error.connect(self._on_error)
@@ -222,9 +235,12 @@ class SnapshotPage(QWidget):
     def _on_after_done(self, after: dict):
         self._progress.hide()
         self._count_label.setText("")
+        if "filesystem" in after:
+            fs_msg = f"{len(after['filesystem']):,} files"
+        else:
+            fs_msg = f"{len(after.get('usn_records', {})):,} filesystem changes"
         self._status_label.setText(
-            f"After snapshot: {len(after['filesystem']):,} files  |  "
-            f"{len(after['registry']):,} registry values"
+            f"After snapshot: {fs_msg}  |  {len(after['registry']):,} registry values"
         )
         self.snapshots_ready.emit(self._before, after)
 

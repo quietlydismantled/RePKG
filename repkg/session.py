@@ -7,7 +7,8 @@ from __future__ import annotations
 import gzip
 import json
 
-SESSION_VERSION = 1
+SESSION_VERSION = 2
+SUPPORTED_VERSIONS = (1, 2)
 SESSION_EXT = ".repkg"
 
 
@@ -27,6 +28,6 @@ def load_session(path: str) -> tuple[dict, dict, dict]:
     """Returns (before, after, meta)."""
     with gzip.open(path, "rb") as f:
         payload = json.loads(f.read().decode("utf-8"))
-    if payload.get("version") != SESSION_VERSION:
+    if payload.get("version") not in SUPPORTED_VERSIONS:
         raise ValueError(f"Unsupported session version: {payload.get('version')}")
     return payload["before"], payload["after"], payload.get("meta", {})

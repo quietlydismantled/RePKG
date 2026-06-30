@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import usn
 from ..config import load_config, save_config
-from ..differ import diff
+from ..differ import assemble, diff_registry
+from ..engines import make_engine
 from ..session import SESSION_EXT, load_session, save_session
 from .theme import DARK, LIGHT, apply_theme
 from .pages.changes_page import ChangesPage
@@ -73,6 +75,9 @@ class MainWindow(QMainWindow):
         self._changeset = None
         self._before = None
         self._after = None
+        self._engine = None
+        self._scan_roots = []
+        self._scan_excl = []
         self._config = load_config()
         self._theme = DARK if self._config.get("theme", "dark") == "dark" else LIGHT
         self._build_menu()
@@ -179,16 +184,34 @@ class MainWindow(QMainWindow):
         exclusions = self._configure_page.get_exclusions()
         reg_hives = self._configure_page.get_reg_hives()
         settle = self._configure_page.get_settle_delay()
+
+        engine_name = self._configure_page.get_scan_engine()
+        if engine_name == "usn":
+            ok, reason = usn.is_available(fs_roots)
+            if not ok:
+                engine_name = "snapshot"
+                self._status_bar.showMessage(
+                    f"USN unavailable ({reason}); using full snapshot.", 8000
+                )
+        self._engine = make_engine(engine_name)
+        self._scan_roots = fs_roots
+        self._scan_excl = exclusions
+
         self._persist_config()  # save custom paths/settings before a long scan
-        self._snapshot_page.configure(fs_roots, exclusions, reg_hives, settle)
+        self._snapshot_page.configure(self._engine, fs_roots, exclusions, reg_hives, settle)
         self._go_to(PAGE_SNAPSHOT)
         self._snapshot_page.start()
+
+    def _build_changeset(self, before: dict, after: dict):
+        file_triple = self._engine.file_changes(before, after, self._scan_roots, self._scan_excl)
+        reg_triple = diff_registry(before.get("registry", {}), after.get("registry", {}))
+        return assemble(file_triple, reg_triple)
 
     def _on_snapshots_ready(self, before: dict, after: dict):
         self._before = before
         self._after = after
         self._save_action.setEnabled(True)
-        self._changeset = diff(before, after)
+        self._changeset = self._build_changeset(before, after)
         self._changes_page.load_changeset(self._changeset)
         self._go_to(PAGE_CHANGES)
 
@@ -211,7 +234,12 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(SESSION_EXT):
             path += SESSION_EXT
         try:
-            save_session(self._before, self._after, path)
+            meta = {
+                "engine": getattr(self._engine, "name", "snapshot"),
+                "roots": self._scan_roots,
+                "exclusions": self._scan_excl,
+            }
+            save_session(self._before, self._after, path, meta)
             self._status_bar.showMessage(f"Session saved: {path}", 5000)
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", str(e))
@@ -223,14 +251,17 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            before, after, _meta = load_session(path)
+            before, after, meta = load_session(path)
         except Exception as e:
             QMessageBox.critical(self, "Load Failed", str(e))
             return
         self._before = before
         self._after = after
+        self._engine = make_engine(meta.get("engine", "snapshot"))
+        self._scan_roots = meta.get("roots", [])
+        self._scan_excl = meta.get("exclusions", [])
         self._save_action.setEnabled(True)
-        self._changeset = diff(before, after)
+        self._changeset = self._build_changeset(before, after)
         self._changes_page.load_changeset(self._changeset)
         self._go_to(PAGE_CHANGES)
         self._status_bar.showMessage(f"Session loaded: {path}", 5000)

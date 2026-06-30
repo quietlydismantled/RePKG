@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ... import usn
 from ...snapshotter import DEFAULT_FS_EXCLUSIONS, DEFAULT_FS_ROOTS, DEFAULT_REG_HIVES, HIVE_NAMES
 
 # Hives the user can pick when adding a custom registry root.
@@ -183,17 +184,36 @@ class ConfigurePage(QWidget):
         reg_layout.addLayout(reg_btns)
         layout.addWidget(reg_group)
 
-        # --- Settle delay ---
-        settle_group = QGroupBox("Options")
-        settle_layout = QHBoxLayout(settle_group)
-        settle_layout.addWidget(QLabel("Settle delay before after-snapshot:"))
+        # --- Options ---
+        opt_group = QGroupBox("Options")
+        opt_layout = QVBoxLayout(opt_group)
+
+        engine_row = QHBoxLayout()
+        engine_row.addWidget(QLabel("Scan engine:"))
+        self._engine_combo = QComboBox()
+        self._engine_combo.addItem("Full snapshot (any filesystem)", "snapshot")
+        self._engine_combo.addItem("USN journal (NTFS, fast)", "usn")
+        self._engine_combo.currentIndexChanged.connect(self._on_engine_changed)
+        engine_row.addWidget(self._engine_combo)
+        engine_row.addStretch()
+        opt_layout.addLayout(engine_row)
+
+        self._engine_note = QLabel("")
+        self._engine_note.setWordWrap(True)
+        self._engine_note.setStyleSheet("color: #ff9800;")
+        opt_layout.addWidget(self._engine_note)
+
+        settle_row = QHBoxLayout()
+        settle_row.addWidget(QLabel("Settle delay before after-snapshot:"))
         self._settle_spin = QSpinBox()
         self._settle_spin.setRange(0, 300)
         self._settle_spin.setValue(5)
         self._settle_spin.setSuffix(" s")
-        settle_layout.addWidget(self._settle_spin)
-        settle_layout.addStretch()
-        layout.addWidget(settle_group)
+        settle_row.addWidget(self._settle_spin)
+        settle_row.addStretch()
+        opt_layout.addLayout(settle_row)
+
+        layout.addWidget(opt_group)
 
         layout.addStretch()
 
@@ -216,6 +236,22 @@ class ConfigurePage(QWidget):
     def _remove_selected(self, widget: QListWidget):
         for item in widget.selectedItems():
             widget.takeItem(widget.row(item))
+
+    # --- engine ---
+    def _on_engine_changed(self):
+        if self._engine_combo.currentData() != "usn":
+            self._engine_note.setText("")
+            return
+        ok, reason = usn.is_available(self.get_fs_roots() or DEFAULT_FS_ROOTS)
+        if ok:
+            self._engine_note.setText(
+                "USN journal active. Captures only changed files — much faster on large roots. "
+                "Runs whole-volume, so unrelated background changes may appear (use exclusions / noise filter)."
+            )
+        else:
+            self._engine_note.setText(
+                f"USN journal unavailable: {reason}. Will fall back to full snapshot at scan time."
+            )
 
     # --- registry helpers ---
     def _add_reg_item(self, label: str, checked: bool):
@@ -312,6 +348,12 @@ class ConfigurePage(QWidget):
         if settle is not None:
             self._settle_spin.setValue(int(settle))
 
+        engine = cfg.get("scan_engine")
+        if engine:
+            idx = self._engine_combo.findData(engine)
+            if idx >= 0:
+                self._engine_combo.setCurrentIndex(idx)
+
     def export_config(self) -> dict:
         return {
             "fs_roots": [
@@ -330,6 +372,7 @@ class ConfigurePage(QWidget):
                 for i in range(self._reg_list.count())
             ],
             "settle_delay": self._settle_spin.value(),
+            "scan_engine": self._engine_combo.currentData(),
         }
 
     # --- getters ---
@@ -358,3 +401,6 @@ class ConfigurePage(QWidget):
 
     def get_settle_delay(self) -> int:
         return self._settle_spin.value()
+
+    def get_scan_engine(self) -> str:
+        return self._engine_combo.currentData()

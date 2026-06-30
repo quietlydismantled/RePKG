@@ -16,6 +16,7 @@ DEFAULTS = {
     "settle_delay": 5,
     "theme": "dark",
     "last_output_dir": "",
+    "scan_engine": "snapshot",  # "snapshot" (walk) | "usn"
 }
 
 
