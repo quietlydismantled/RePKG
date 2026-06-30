@@ -2,15 +2,43 @@ import os
 import tempfile
 from typing import Optional
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
+
+
+class ElidingLabel(QLabel):
+    """Single-line label that fills its width and elides on the left
+    (keeps the tail of the path visible) when text exceeds the width."""
+
+    def __init__(self, mode=Qt.TextElideMode.ElideLeft, parent=None):
+        super().__init__(parent)
+        self._mode = mode
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text: str):
+        self._full = text or ""
+        self._update_elided()
+
+    def fullText(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_elided()
+
+    def _update_elided(self):
+        fm = self.fontMetrics()
+        elided = fm.elidedText(self._full, self._mode, max(0, self.width() - 2))
+        super().setText(elided)
 
 from ...snapshotter import (
     snapshot_filesystem,
@@ -80,8 +108,8 @@ class SnapshotPage(QWidget):
         self._title = QLabel("<h2>Taking Snapshot…</h2>")
         layout.addWidget(self._title)
 
-        self._status_label = QLabel("Preparing…")
-        self._status_label.setWordWrap(True)
+        self._status_label = ElidingLabel()
+        self._status_label.setText("Preparing…")
         layout.addWidget(self._status_label)
 
         self._count_label = QLabel("")
@@ -136,7 +164,7 @@ class SnapshotPage(QWidget):
         self._worker.start()
 
     def _on_progress(self, msg: str, count: int):
-        self._status_label.setText(msg[-80:] if len(msg) > 80 else msg)
+        self._status_label.setText(msg)
         self._count_label.setText(f"{count:,} files scanned")
 
     def _on_before_done(self, snapshot: dict):
@@ -202,4 +230,5 @@ class SnapshotPage(QWidget):
 
     def _on_error(self, msg: str):
         self._progress.hide()
-        self._status_label.setText(f"<span style='color:red'>Error: {msg}</span>")
+        self._status_label.setStyleSheet("color: #f44336;")
+        self._status_label.setText(f"Error: {msg}")
