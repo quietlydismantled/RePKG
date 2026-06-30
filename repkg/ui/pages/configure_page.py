@@ -3,13 +3,17 @@ import winreg
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -19,6 +23,23 @@ from PySide6.QtWidgets import (
 
 from ...snapshotter import DEFAULT_FS_EXCLUSIONS, DEFAULT_FS_ROOTS, DEFAULT_REG_HIVES, HIVE_NAMES
 
+# Hives the user can pick when adding a custom registry root.
+ADD_HIVE_OPTIONS = [
+    "HKEY_LOCAL_MACHINE",
+    "HKEY_CURRENT_USER",
+    "HKEY_CLASSES_ROOT",
+    "HKEY_USERS",
+    "HKEY_CURRENT_CONFIG",
+]
+
+NAME_TO_HIVE = {
+    "HKEY_LOCAL_MACHINE": winreg.HKEY_LOCAL_MACHINE,
+    "HKEY_CURRENT_USER": winreg.HKEY_CURRENT_USER,
+    "HKEY_CLASSES_ROOT": winreg.HKEY_CLASSES_ROOT,
+    "HKEY_USERS": winreg.HKEY_USERS,
+    "HKEY_CURRENT_CONFIG": winreg.HKEY_CURRENT_CONFIG,
+}
+
 ALL_REG_HIVES = [
     (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE"),
     (winreg.HKEY_CURRENT_USER, r"SOFTWARE"),
@@ -26,6 +47,44 @@ ALL_REG_HIVES = [
     (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control"),
     (winreg.HKEY_CURRENT_USER, r"Environment"),
 ]
+
+
+def _reg_label(hive_handle, key_path: str) -> str:
+    return f"{HIVE_NAMES.get(hive_handle, str(hive_handle))}\\{key_path}"
+
+
+# Default registry list as (label, checked) pairs.
+DEFAULT_REG_ENTRIES = [
+    (_reg_label(h, k), (h, k) in DEFAULT_REG_HIVES) for h, k in ALL_REG_HIVES
+]
+
+
+class _AddRegDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Registry Key")
+        lay = QVBoxLayout(self)
+        row = QHBoxLayout()
+        self._hive = QComboBox()
+        self._hive.addItems(ADD_HIVE_OPTIONS)
+        row.addWidget(self._hive)
+        row.addWidget(QLabel("\\"))
+        self._path = QLineEdit()
+        self._path.setPlaceholderText(r"SOFTWARE\\Vendor\\Product")
+        row.addWidget(self._path, 1)
+        lay.addLayout(row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def result_label(self) -> str:
+        sub = self._path.text().strip().strip("\\")
+        if not sub:
+            return ""
+        return f"{self._hive.currentText()}\\{sub}"
 
 
 class ConfigurePage(QWidget):
@@ -102,16 +161,26 @@ class ConfigurePage(QWidget):
         ex_layout.addLayout(ex_btns)
         layout.addWidget(ex_group)
 
-        # --- Registry hives ---
-        reg_group = QGroupBox("Registry Hives")
+        # --- Registry keys ---
+        reg_group = QGroupBox("Registry Keys")
         reg_layout = QVBoxLayout(reg_group)
-        self._reg_checks: list[tuple[QCheckBox, tuple]] = []
-        for hive_handle, key_path in ALL_REG_HIVES:
-            hive_name = HIVE_NAMES.get(hive_handle, str(hive_handle))
-            cb = QCheckBox(f"{hive_name}\\{key_path}")
-            cb.setChecked((hive_handle, key_path) in DEFAULT_REG_HIVES)
-            reg_layout.addWidget(cb)
-            self._reg_checks.append((cb, (hive_handle, key_path)))
+        self._reg_list = QListWidget()
+        self._reg_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        for label, checked in DEFAULT_REG_ENTRIES:
+            self._add_reg_item(label, checked)
+        reg_layout.addWidget(self._reg_list)
+        reg_btns = QHBoxLayout()
+        reg_add = QPushButton("Add Key…")
+        reg_add.clicked.connect(self._add_reg_key)
+        reg_rm = QPushButton("Remove Selected")
+        reg_rm.clicked.connect(lambda: self._remove_selected(self._reg_list))
+        reg_def = QPushButton("Restore Defaults")
+        reg_def.clicked.connect(self._restore_reg_defaults)
+        reg_btns.addWidget(reg_add)
+        reg_btns.addWidget(reg_rm)
+        reg_btns.addWidget(reg_def)
+        reg_btns.addStretch()
+        reg_layout.addLayout(reg_btns)
         layout.addWidget(reg_group)
 
         # --- Settle delay ---
@@ -147,6 +216,32 @@ class ConfigurePage(QWidget):
     def _remove_selected(self, widget: QListWidget):
         for item in widget.selectedItems():
             widget.takeItem(widget.row(item))
+
+    # --- registry helpers ---
+    def _add_reg_item(self, label: str, checked: bool):
+        item = QListWidgetItem(label)
+        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        self._reg_list.addItem(item)
+
+    def _existing_reg(self) -> set:
+        return {self._reg_list.item(i).text() for i in range(self._reg_list.count())}
+
+    def _add_reg_key(self):
+        dlg = _AddRegDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        label = dlg.result_label()
+        if not label:
+            return
+        if label in self._existing_reg():
+            QMessageBox.information(self, "Already Present", f"{label} is already listed.")
+            return
+        self._add_reg_item(label, True)
+
+    def _restore_reg_defaults(self):
+        self._reg_list.clear()
+        for label, checked in DEFAULT_REG_ENTRIES:
+            self._add_reg_item(label, checked)
 
     def _existing_paths(self, widget: QListWidget) -> set:
         return {widget.item(i).text() for i in range(widget.count())}
@@ -205,9 +300,13 @@ class ConfigurePage(QWidget):
 
         reg_hives = cfg.get("reg_hives")
         if reg_hives:
-            for cb, _ in self._reg_checks:
-                if cb.text() in reg_hives:
-                    cb.setChecked(bool(reg_hives[cb.text()]))
+            self._reg_list.clear()
+            if isinstance(reg_hives, dict):  # legacy format: {label: checked}
+                for label, checked in reg_hives.items():
+                    self._add_reg_item(label, bool(checked))
+            else:  # list of {"label", "checked"}
+                for entry in reg_hives:
+                    self._add_reg_item(entry.get("label", ""), entry.get("checked", True))
 
         settle = cfg.get("settle_delay")
         if settle is not None:
@@ -223,7 +322,13 @@ class ConfigurePage(QWidget):
                 for i in range(self._fs_list.count())
             ],
             "exclusions": [self._ex_list.item(i).text() for i in range(self._ex_list.count())],
-            "reg_hives": {cb.text(): cb.isChecked() for cb, _ in self._reg_checks},
+            "reg_hives": [
+                {
+                    "label": self._reg_list.item(i).text(),
+                    "checked": self._reg_list.item(i).checkState() == Qt.CheckState.Checked,
+                }
+                for i in range(self._reg_list.count())
+            ],
             "settle_delay": self._settle_spin.value(),
         }
 
@@ -239,7 +344,17 @@ class ConfigurePage(QWidget):
         return [self._ex_list.item(i).text() for i in range(self._ex_list.count())]
 
     def get_reg_hives(self) -> list[tuple]:
-        return [hive for cb, hive in self._reg_checks if cb.isChecked()]
+        result = []
+        for i in range(self._reg_list.count()):
+            item = self._reg_list.item(i)
+            if item.checkState() != Qt.CheckState.Checked:
+                continue
+            label = item.text()
+            name, _, sub = label.partition("\\")
+            handle = NAME_TO_HIVE.get(name)
+            if handle is not None:
+                result.append((handle, sub))
+        return result
 
     def get_settle_delay(self) -> int:
         return self._settle_spin.value()
