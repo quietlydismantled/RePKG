@@ -131,7 +131,12 @@ class MainWindow(QMainWindow):
         self._snapshot_page = SnapshotPage()
         self._changes_page = ChangesPage()
         self._export_page = ExportPage()
-        self._export_page.set_output_dir(self._config.get("last_output_dir", ""))
+        history = list(self._config.get("output_dir_history") or [])
+        legacy = self._config.get("last_output_dir", "")  # migrate old single value
+        if legacy and legacy not in history:
+            history.insert(0, legacy)
+        self._export_page.set_history(history)
+        self._export_page.exported.connect(self._persist_config)
 
         self._stack.addWidget(self._configure_page)
         self._stack.addWidget(self._snapshot_page)
@@ -279,7 +284,7 @@ class MainWindow(QMainWindow):
     def _persist_config(self):
         cfg = self._configure_page.export_config()
         cfg["theme"] = self._theme
-        cfg["last_output_dir"] = self._export_page.get_output_dir()
+        cfg["output_dir_history"] = self._export_page.get_history()
         save_config(cfg)
 
     def closeEvent(self, event):

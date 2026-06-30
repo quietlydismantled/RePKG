@@ -15,8 +15,9 @@ DEFAULTS = {
     "reg_hives": None,       # None -> built-in; else {label: checked}
     "settle_delay": 5,
     "theme": "dark",
-    "last_output_dir": "",
-    "scan_engine": "snapshot",  # "snapshot" (walk) | "usn"
+    "last_output_dir": "",          # legacy (v<=current); migrated into history
+    "output_dir_history": [],       # recent export dirs, most-recent first
+    "scan_engine": "snapshot",      # "snapshot" (walk) | "usn"
 }
 
 
