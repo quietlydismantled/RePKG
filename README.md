@@ -170,9 +170,7 @@ In slightly more responsible words:
 
 It is not magic. It is not psychic. It will not stop a noisy machine from producing noisy results. But it *will* help turn “what in the absolute registry hive did that setup wizard just do?” into “ah, here are the changes, neatly checkable, filterable, and ready to package.”
 
-Use it in a clean-ish environment. Keep the scope tight. Read the diff. Trust nothing wearing the word `Updater` in a filename.
-
-Happy repackaging, brave installer wrangler. May your captures be clean, your hives readable, and your WiX compile on the first try, which would frankly be suspicious. 😂
+Use it in a clean-ish environment (READ: SRSLY run this in a clean vm snapshot). Keep the scope tight. Read the diff. Trust nothing wearing the word `Updater` in a filename.
 
 ---
 
